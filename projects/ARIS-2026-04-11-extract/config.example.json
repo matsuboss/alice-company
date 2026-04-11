@@ -1,0 +1,8 @@
+{
+    "server_url": "https://your-server.example",
+    "username": "your@email",
+    "password": "use-env-or-secret-manager",
+    "snapshot_interval": 5,
+    "upload_interval": 60,
+    "anthropic_api_key": "sk-ant-api03-..."
+}
