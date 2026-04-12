@@ -1,0 +1,11 @@
+{
+  "folders": [
+    {
+      "name": "ARIS-2026-04-11-extract",
+      "path": "."
+    }
+  ],
+  "settings": {
+    "files.hotExit": "off"
+  }
+}

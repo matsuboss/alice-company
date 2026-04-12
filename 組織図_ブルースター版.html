@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ブルースター — 会社本部</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#04060e;display:flex;justify-content:center;align-items:center;min-height:100vh;font-family:"Segoe UI","Hiragino Sans","Hiragino Kaku Gothic ProN",Meiryo,sans-serif}
+#wrap{position:relative;width:100%;max-width:900px;background:#04060e;border-radius:14px;overflow:hidden;user-select:none}
+canvas{display:block;width:100%;cursor:grab}
+canvas.dragging{cursor:grabbing}
+canvas.can-open{cursor:pointer}
+#panel{position:absolute;top:12px;left:50%;transform:translateX(-50%);background:rgba(3,7,22,.93);border:1px solid rgba(80,140,255,.3);border-radius:9px;padding:8px 20px 10px;font-family:inherit;text-align:center;opacity:0;transition:opacity .2s;pointer-events:none;white-space:nowrap;min-width:200px}
+#ptitle{font-size:13px;font-weight:500;display:block;margin-bottom:1px}
+#prole{font-size:10px;color:rgba(140,180,255,.6);display:block;margin-bottom:6px}
+#popen{font-size:11px;color:#7eb8ff;pointer-events:auto;text-decoration:none;border:1px solid rgba(100,160,255,.35);border-radius:6px;padding:4px 12px;display:inline-block}
+#popen:hover{background:rgba(60,100,180,.25);color:#b8d8ff}
+#hint{position:absolute;bottom:9px;left:50%;transform:translateX(-50%);font-family:inherit;font-size:10px;color:rgba(80,120,200,.32);pointer-events:none;white-space:nowrap}
+#dep{position:absolute;top:12px;right:14px;font-family:inherit;font-size:10px;color:rgba(100,150,255,.38);pointer-events:none;max-width:42%;text-align:right;line-height:1.25}
+#back{position:absolute;top:12px;left:14px;font-size:10px}
+#back a{color:rgba(120,170,255,.55);text-decoration:none}
+#back a:hover{color:rgba(160,200,255,.9)}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="cv"></canvas>
+<div id="back"><a href="概要.md">← 概要</a></div>
+<div id="panel"><span id="ptitle"></span><span id="prole"></span><a id="popen" href="#" tabindex="-1">文書を開く</a></div>
+<div id="dep"></div>
+<div id="hint">ホイール:ズーム ／ ドラッグ:回転 ／ クリック:フォーカス ／ ダブルクリック:文書を開く · データは下記を `部署/部署一覧.md` と同期</div>
+</div>
+<script>
+(function(){
+
+/* ============================================================
+   ▼▼▼ 以下を `部署/部署一覧.md` のコードブロックと同一に保つ ▼▼▼
+   ============================================================ */
+var GOVERNANCE_NODES = [
+  { name: "取締役会", path: "ガバナンス/board.md", hint: "ガバナンス" },
+  { name: "Boss", path: "ガバナンス/board.md", hint: "議長" },
+  { name: "ARIS", path: "ARIS/profile.md", hint: "最高経営責任者" },
+  { name: "全社執行", path: "部署/部署一覧.md", hint: "執行" },
+];
+
+var DEPTS_MASTER = [
+  { name: "業務運営", file: "./業務運営.md" },
+  { name: "財務", file: "./財務.md" },
+  { name: "事業・製品", file: "./事業・製品.md" },
+  { name: "開発", file: "./開発.md" },
+  { name: "マーケティング", file: "./マーケティング.md" },
+  { name: "人事", file: "./人事.md" },
+];
+
+var PROJECT_NODES = [
+  {
+    name: "ARIS PJ",
+    path: "プロジェクト/ARIS-2026-04-11-extract/README.md",
+    hint: "製品コード",
+  },
+];
+/* ▲▲▲ 貼り付けゾーン終わり（`BLUESTAR_META` はブルースター専用） ▲▲▲ */
+
+var CEO_PATH = "ARIS/profile.md";
+
+var ROLE_PATH_OVERRIDE = {
+  ARISPJ: "プロジェクト/ARIS-2026-04-11-extract/README.md",
+};
+
+/** `DEPTS_MASTER` の name とキーが一致必須 */
+var BLUESTAR_META = {
+  業務運営: { id: "ops", c: "#22d3ee", roles: ["プロセス整備", "ナレッジ管理", "横断可視化", "ツール運用", "品質基準", "手順・テンプレ", "リスク調整"] },
+  財務: { id: "fin", c: "#4ade80", roles: ["予算・実績", "レポート", "支出記録", "エスカレート資料", "企業価値・算定", "提案書", "承認閾値"] },
+  "事業・製品": { id: "prod", c: "#f87171", roles: ["ロードマップ", "スコープ", "要件・受入", "プロジェクト連携", "ARISPJ", "戦略提案", "マイルストーン"] },
+  開発: { id: "eng", c: "#38bdf8", roles: ["実装", "設計レビュー", "セキュリティ", "テスト", "CI/CD", "技術負債", "プロジェクト同期"] },
+  マーケティング: { id: "mkt", c: "#c084fc", roles: ["ポジション", "コンテンツ", "チャネル", "キャンペーン", "測定", "リリース広報", "ビジョン整合"] },
+  人事: { id: "hr", c: "#a78bfa", roles: ["採用要件", "面接・オファー", "オンボーディング", "評価・育成", "コンプラ", "Boss資料", "開発採用連携"] },
+};
+
+function deptFileToPath(file) {
+  var p = (file || "").replace(/^\.\//, "");
+  return "部署/" + p;
+}
+
+function buildMergedDepts() {
+  var out = [];
+  for (var i = 0; i < DEPTS_MASTER.length; i++) {
+    var d = DEPTS_MASTER[i];
+    var meta = BLUESTAR_META[d.name];
+    if (!meta) throw new Error("BLUESTAR_META に未定義の部署: " + d.name);
+    out.push({ id: meta.id, label: d.name, file: d.file, c: meta.c, roles: meta.roles });
+  }
+  return out;
+}
+
+var DEPTS = buildMergedDepts();
+
+var cv = document.getElementById("cv"),
+  ctx = cv.getContext("2d");
+var W = 900,
+  H = 600;
+cv.width = W;
+cv.height = H;
+var panel = document.getElementById("panel"),
+  depEl = document.getElementById("dep");
+
+var NODES = [],
+  byId = {};
+var ceo = { id: "ceo", label: "ARIS", role: "最高経営責任者（CEO）", c: "#ffffff", path: CEO_PATH, px: 0, py: 0, pz: 0, sz: 11, parent: null, layer: 0, phase: 0 };
+NODES.push(ceo);
+byId["ceo"] = ceo;
+
+function fibSphere(n, R, off) {
+  off = off || 0;
+  var g = Math.PI * (3 - Math.sqrt(5)),
+    pts = [];
+  for (var i = 0; i < n; i++) {
+    var y = 1 - ((i + off) / (n + off * 2 - 1)) * 2,
+      r = Math.sqrt(Math.max(0, 1 - y * y)),
+      t = g * (i + off * 7);
+    pts.push({ x: Math.cos(t) * r * R, y: y * R, z: Math.sin(t) * r * R });
+  }
+  return pts;
+}
+
+var govList = GOVERNANCE_NODES.filter(function (g) {
+  return g.name !== "ARIS";
+});
+var gpts = fibSphere(govList.length, 52);
+govList.forEach(function (g, i) {
+  var n = {
+    id: "gov_" + i,
+    label: g.name,
+    role: g.hint,
+    c: "#94a3b8",
+    path: g.path,
+    px: gpts[i].x,
+    py: gpts[i].y,
+    pz: gpts[i].z,
+    sz: 6,
+    parent: "ceo",
+    layer: 1,
+    phase: Math.random() * Math.PI * 2,
+  };
+  NODES.push(n);
+  byId[n.id] = n;
+});
+
+var L1pts = fibSphere(DEPTS.length, 95);
+DEPTS.forEach(function (d, i) {
+  var n = { id: d.id, label: d.label, role: d.label + " 統括", c: d.c, path: deptFileToPath(d.file), px: L1pts[i].x, py: L1pts[i].y, pz: L1pts[i].z, sz: 7, parent: "ceo", layer: 2, phase: Math.random() * Math.PI * 2 };
+  NODES.push(n);
+  byId[d.id] = n;
+});
+
+var pjPts = fibSphere(PROJECT_NODES.length, 118, 2);
+PROJECT_NODES.forEach(function (p, i) {
+  var n = {
+    id: "proj_" + i,
+    label: p.name,
+    role: p.hint || "プロジェクト",
+    c: "#f0883e",
+    path: p.path,
+    px: pjPts[i].x,
+    py: pjPts[i].y,
+    pz: pjPts[i].z,
+    sz: 5.2,
+    parent: "eng",
+    layer: 3,
+    phase: Math.random() * Math.PI * 2,
+  };
+  NODES.push(n);
+  byId[n.id] = n;
+});
+
+var l2i = 0,
+  totalL2 = DEPTS.reduce(function (s, d) {
+    return s + d.roles.length;
+  }, 0),
+  allL2 = fibSphere(totalL2, 182, 4);
+DEPTS.forEach(function (d) {
+  var par = byId[d.id],
+    len = Math.sqrt(par.px * par.px + par.py * par.py + par.pz * par.pz) || 1;
+  var ox = par.px / len,
+    oy = par.py / len,
+    oz = par.pz / len;
+  d.roles.forEach(function (role, ri) {
+    var b = allL2[l2i++],
+      bl = Math.sqrt(b.x * b.x + b.y * b.y + b.z * b.z) || 1;
+    var bx = b.x / bl,
+      by = b.y / bl,
+      bz = b.z / bl,
+      dot = bx * ox + by * oy + bz * oz;
+    var wx = bx - dot * ox * 0.6,
+      wy = by - dot * oy * 0.6,
+      wz = bz - dot * oz * 0.6;
+    var wl = Math.sqrt(wx * wx + wy * wy + wz * wz) || 1,
+      rr = 168 + Math.random() * 22,
+      id = d.id + "_" + ri;
+    var rpath = ROLE_PATH_OVERRIDE.hasOwnProperty(role) ? ROLE_PATH_OVERRIDE[role] : deptFileToPath(d.file);
+    NODES.push({ id: id, label: role, role: d.label + " / " + role, c: d.c, path: rpath, px: (wx / wl) * rr, py: (wy / wl) * rr, pz: (wz / wl) * rr, sz: 3.8, parent: d.id, layer: 4, phase: Math.random() * Math.PI * 2 });
+  });
+});
+
+var MIN_DIST = 60,
+  MAX_DIST = 1100;
+var BLUE = "50,100,255";
+var rotY = 0.3,
+  rotX = 0.15,
+  camDist = 620,
+  targetDist = 620;
+var drag = false,
+  lastX = 0,
+  lastY = 0,
+  totalMoved = 0,
+  autoRot = true,
+  focus = null,
+  tick = 0;
+var lookX = 0,
+  lookY = 0,
+  tlx = 0,
+  tly = 0;
+
+function updatePanelLink(hit) {
+  var po = document.getElementById("popen");
+  if (!hit || !hit.path) {
+    po.style.display = "none";
+    po.removeAttribute("href");
+    return;
+  }
+  po.href = hit.path;
+  po.style.display = "inline-block";
+}
+
+function openNodeDoc(hit) {
+  if (hit && hit.path) window.location.href = hit.path;
+}
+
+function proj(x, y, z) {
+  var cy = Math.cos(rotY),
+    sy = Math.sin(rotY),
+    cx = Math.cos(rotX),
+    sx = Math.sin(rotX);
+  var rx = x * cy - z * sy,
+    rz = x * sy + z * cy,
+    ry = y * cx - rz * sx;
+  rz = y * sx + rz * cx;
+  var d = rz + camDist;
+  if (d < 8) return { sx: W / 2, sy: H / 2, scale: 0, depth: d };
+  var f = 520 / d;
+  return { sx: W / 2 + (rx - lookX) * f, sy: H / 2 + (ry - lookY) * f, scale: f, depth: d };
+}
+
+function hex2rgb(h) {
+  return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)].join(",");
+}
+
+function glow(x, y, r, rgb, a, gr) {
+  var g = ctx.createRadialGradient(x, y, r * 0.05, x, y, gr);
+  g.addColorStop(0, "rgba(" + rgb + "," + Math.min(1, a) + ")");
+  g.addColorStop(0.3, "rgba(" + rgb + "," + a * 0.6 + ")");
+  g.addColorStop(0.7, "rgba(" + rgb + "," + a * 0.18 + ")");
+  g.addColorStop(1, "rgba(" + rgb + ",0)");
+  ctx.beginPath();
+  ctx.arc(x, y, gr, 0, Math.PI * 2);
+  ctx.fillStyle = g;
+  ctx.fill();
+}
+
+function edgeAlpha(n, focus) {
+  if (focus) return null;
+  if (n.layer === 2) return 0.75;
+  if (n.layer === 1) return 0.62;
+  if (n.layer === 3) return 0.55;
+  return 0.42;
+}
+
+function edgeWidth(n) {
+  if (n.layer === 2) return 2.2;
+  if (n.layer === 1) return 1.85;
+  return 1.15;
+}
+
+function render() {
+  ctx.fillStyle = "#04060e";
+  ctx.fillRect(0, 0, W, H);
+  var inside = camDist < 200;
+  if (inside) {
+    var tt = Math.max(0, 1 - camDist / 200);
+    ctx.fillStyle = "rgba(10,20,50," + tt * 0.28 + ")";
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  var pm = {};
+  NODES.forEach(function (n) {
+    var p = proj(n.px, n.py, n.pz);
+    pm[n.id] = { n: n, sx: p.sx, sy: p.sy, scale: p.scale, depth: p.depth };
+  });
+
+  var edges = NODES.filter(function (n) {
+    return n.parent;
+  }).map(function (n) {
+    return { n: n, s: pm[n.parent], t: pm[n.id] };
+  });
+  edges.sort(function (a, b) {
+    return (a.s.depth + a.t.depth) / 2 - (b.s.depth + b.t.depth) / 2;
+  });
+  edges.forEach(function (e) {
+    var n = e.n,
+      s = e.s,
+      t = e.t;
+    if (s.scale <= 0 || t.scale <= 0) return;
+    var isCon = focus && (n.parent === focus.id || n.id === focus.id || focus.parent === n.id);
+    var rgb = focus ? (isCon ? hex2rgb(n.c) : BLUE) : BLUE;
+    var al = focus ? (isCon ? 0.9 : 0.04) : edgeAlpha(n, focus);
+    if (al < 0.02) return;
+    var w = edgeWidth(n) * Math.max(0.4, Math.min(3, (s.scale + t.scale) / 2));
+    var g = ctx.createLinearGradient(s.sx, s.sy, t.sx, t.sy);
+    g.addColorStop(0, "rgba(" + rgb + "," + al * 0.7 + ")");
+    g.addColorStop(0.5, "rgba(" + rgb + "," + al + ")");
+    g.addColorStop(1, "rgba(" + rgb + "," + al * 0.7 + ")");
+    ctx.beginPath();
+    ctx.moveTo(s.sx, s.sy);
+    ctx.lineTo(t.sx, t.sy);
+    ctx.strokeStyle = g;
+    ctx.lineWidth = w;
+    ctx.stroke();
+  });
+
+  var sorted = Object.values(pm).sort(function (a, b) {
+    return b.depth - a.depth;
+  });
+  sorted.forEach(function (p) {
+    var n = p.n,
+      sx = p.sx,
+      sy = p.sy,
+      scale = p.scale;
+    if (scale <= 0) return;
+    var isFoc = focus && focus.id === n.id;
+    var isRel = focus && (n.parent === focus.id || focus.parent === n.id);
+    var dim = focus && !isFoc && !isRel;
+    var rgb = focus ? hex2rgb(n.c) : BLUE;
+    var pulse = 0.9 + 0.1 * Math.sin(tick * (n.layer === 4 ? 0.85 : 1.05) + n.phase);
+    var r = Math.max(0.5, n.sz * scale * pulse);
+
+    if (!dim) {
+      if (!focus) {
+        glow(sx, sy, r, rgb, 0.9, r * 3.5);
+        glow(sx, sy, r, rgb, 1.0, r * 1.6);
+      } else {
+        var ga = isFoc ? 0.9 : isRel ? 0.6 : 0.25;
+        glow(sx, sy, r, rgb, ga, r * (isFoc ? 3.5 : isRel ? 2.5 : 2));
+      }
+    }
+
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(" + rgb + "," + (dim ? 0.04 : focus ? 0.2 : 0.45) + ")";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(" + rgb + "," + (dim ? 0.07 : isFoc ? 1 : focus ? 0.85 : 1.0) + ")";
+    ctx.lineWidth = isFoc ? 2.5 : 1.4;
+    ctx.stroke();
+
+    if (isFoc) {
+      ctx.beginPath();
+      ctx.arc(sx, sy, r + 5 + 2 * Math.sin(tick * 2.8), 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(" + rgb + ",0.28)";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+
+    if (focus && !dim && scale > (inside ? 0.18 : 0.4)) {
+      var fs = Math.max(8, Math.min(20, Math.round(10 * scale)));
+      ctx.font = fs + "px sans-serif";
+      ctx.fillStyle = "rgba(" + rgb + ",1)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      ctx.fillText(n.label, sx, sy + r + 2);
+    }
+  });
+
+  var pct = Math.max(0, Math.min(100, Math.round((1 - (camDist - MIN_DIST) / (620 - MIN_DIST)) * 100)));
+  depEl.textContent = pct > 5 ? (camDist < 200 ? "内部 " + pct + "%" : "ズーム " + pct + "%") : "ARIS→ガバナンス→部署→PJ→役割";
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  tick += 0.013;
+  if (autoRot) rotY += 0.0018;
+  lookX += (tlx - lookX) * 0.065;
+  lookY += (tly - lookY) * 0.065;
+  camDist += (targetDist - camDist) * 0.1;
+  render();
+}
+loop();
+
+cv.addEventListener(
+  "wheel",
+  function (e) {
+    e.preventDefault();
+    targetDist = Math.max(MIN_DIST, Math.min(MAX_DIST, targetDist + e.deltaY * 1.8));
+    autoRot = false;
+  },
+  { passive: false }
+);
+
+cv.addEventListener("mousedown", function (e) {
+  drag = true;
+  totalMoved = 0;
+  lastX = e.clientX;
+  lastY = e.clientY;
+  cv.classList.add("dragging");
+  autoRot = false;
+});
+window.addEventListener("mouseup", function () {
+  drag = false;
+  cv.classList.remove("dragging");
+});
+window.addEventListener("mousemove", function (e) {
+  if (!drag) return;
+  var dx = e.clientX - lastX,
+    dy = e.clientY - lastY;
+  totalMoved += Math.abs(dx) + Math.abs(dy);
+  rotY += dx * 0.007;
+  rotX += dy * 0.007;
+  lastX = e.clientX;
+  lastY = e.clientY;
+});
+cv.addEventListener(
+  "touchstart",
+  function (e) {
+    e.preventDefault();
+    drag = true;
+    totalMoved = 0;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+    autoRot = false;
+  },
+  { passive: false }
+);
+window.addEventListener("touchend", function () {
+  drag = false;
+});
+window.addEventListener(
+  "touchmove",
+  function (e) {
+    if (!drag) return;
+    var dx = e.touches[0].clientX - lastX,
+      dy = e.touches[0].clientY - lastY;
+    totalMoved += Math.abs(dx) + Math.abs(dy);
+    rotY += dx * 0.007;
+    rotX += dy * 0.007;
+    lastX = e.touches[0].clientX;
+    lastY = e.touches[0].clientY;
+  },
+  { passive: false }
+);
+
+function getHit(cx, cy) {
+  var rect = cv.getBoundingClientRect(),
+    mx = ((cx - rect.left) / rect.width) * W,
+    my = ((cy - rect.top) / rect.height) * H;
+  var best = null,
+    bestD = 99999;
+  NODES.forEach(function (n) {
+    var p = proj(n.px, n.py, n.pz);
+    if (p.scale <= 0) return;
+    var d = Math.sqrt((p.sx - mx) * (p.sx - mx) + (p.sy - my) * (p.sy - my));
+    if (d < n.sz * p.scale + 12 && d < bestD) {
+      best = n;
+      bestD = d;
+    }
+  });
+  return best;
+}
+
+function focusDist(hit) {
+  if (!hit) return 620;
+  if (hit.layer === 0) return 400;
+  if (hit.layer === 1) return 300;
+  if (hit.layer === 2) return 260;
+  if (hit.layer === 3) return 220;
+  return 175;
+}
+
+function doClick(cx, cy) {
+  if (totalMoved > 8) return;
+  var hit = getHit(cx, cy);
+  if (hit) {
+    focus = hit;
+    document.getElementById("ptitle").textContent = hit.label;
+    document.getElementById("ptitle").style.color = hit.c;
+    document.getElementById("prole").textContent = hit.role;
+    panel.style.opacity = 1;
+    updatePanelLink(hit);
+    tlx = hit.px * 0.4;
+    tly = hit.py * 0.4;
+    targetDist = Math.max(MIN_DIST, focusDist(hit));
+  } else {
+    focus = null;
+    panel.style.opacity = 0;
+    updatePanelLink(null);
+    tlx = 0;
+    tly = 0;
+    targetDist = 620;
+    autoRot = true;
+  }
+}
+cv.addEventListener("click", function (e) {
+  doClick(e.clientX, e.clientY);
+});
+cv.addEventListener("dblclick", function (e) {
+  e.preventDefault();
+  if (totalMoved > 8) return;
+  var hit = getHit(e.clientX, e.clientY);
+  openNodeDoc(hit);
+});
+cv.addEventListener("mousemove", function (e) {
+  if (drag) return;
+  var hit = getHit(e.clientX, e.clientY);
+  cv.classList.toggle("can-open", !!(hit && hit.path));
+});
+cv.addEventListener("touchend", function (e) {
+  if (totalMoved < 8) {
+    var t = e.changedTouches[0];
+    doClick(t.clientX, t.clientY);
+  }
+});
+
+document.getElementById("popen").addEventListener("click", function (e) {
+  e.preventDefault();
+  if (focus && focus.path) window.location.href = focus.path;
+});
+})();
+</script>
+</body>
+</html>

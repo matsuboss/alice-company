@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>組織図（スタイル・三次元）</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --shadow: rgba(0, 0, 0, 0.45);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      background: radial-gradient(ellipse 120% 80% at 50% -20%, #1a2332 0%, var(--bg) 55%);
+      color: var(--text);
+      overflow-x: hidden;
+    }
+
+    header {
+      text-align: center;
+      padding: 1.75rem 1rem 0.5rem;
+    }
+
+    header h1 { margin: 0; font-size: 1.35rem; font-weight: 600; }
+    header p { margin: 0.5rem 0 0; font-size: 0.8rem; color: var(--muted); }
+    header a { color: var(--accent); }
+
+    .scene {
+      perspective: 1400px;
+      perspective-origin: 50% 35%;
+      padding: 1.5rem 1rem 2rem;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .board-layer {
+      transform-style: preserve-3d;
+      transform: rotateX(12deg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .connector {
+      width: 2px;
+      height: 24px;
+      background: linear-gradient(180deg, var(--border), transparent);
+      border-radius: 1px;
+    }
+
+    .row-board {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      transform-style: preserve-3d;
+    }
+
+    .dept-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1.1rem;
+      width: 100%;
+      max-width: 920px;
+      margin-top: 0.35rem;
+      justify-items: center;
+    }
+
+    .sphere-link {
+      transform-style: preserve-3d;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+      color: inherit;
+      width: 132px;
+      height: 132px;
+      padding: 0.45rem;
+      text-align: center;
+      font-size: 0.76rem;
+      font-weight: 600;
+      line-height: 1.2;
+      border-radius: 50%;
+      cursor: pointer;
+      border: 1px solid rgba(48, 54, 61, 0.9);
+      background:
+        radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.12) 0%, transparent 42%),
+        radial-gradient(circle at 50% 50%, #22272e 0%, #161b22 55%, #0d1117 100%);
+      box-shadow:
+        inset 3px 4px 10px rgba(255, 255, 255, 0.05),
+        inset -6px -10px 18px rgba(0, 0, 0, 0.45),
+        0 6px 14px var(--shadow);
+      transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .sphere-link--gov {
+      border-color: rgba(88, 166, 255, 0.35);
+    }
+
+    .sphere-link--dept {
+      border-color: rgba(63, 185, 80, 0.25);
+    }
+
+    .sphere-link:hover,
+    .sphere-link:focus-visible {
+      transform: translateZ(14px) scale(1.04);
+      border-color: rgba(88, 166, 255, 0.55);
+      box-shadow:
+        inset 3px 4px 10px rgba(255, 255, 255, 0.07),
+        inset -6px -10px 18px rgba(0, 0, 0, 0.35),
+        0 12px 28px rgba(0, 0, 0, 0.4),
+        0 0 0 2px rgba(88, 166, 255, 0.25);
+      outline: none;
+    }
+
+    .sphere-link .hint {
+      font-size: 0.62rem;
+      font-weight: 500;
+      color: var(--accent);
+      margin-bottom: 0.2rem;
+      letter-spacing: 0.04em;
+    }
+
+    .sphere-link .title {
+      display: block;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .sphere-link .sub {
+      display: block;
+      font-size: 0.55rem;
+      font-weight: 400;
+      color: var(--muted);
+      margin-top: 0.3rem;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .caption {
+      text-align: center;
+      font-size: 0.75rem;
+      color: var(--muted);
+      padding: 0 1rem 2rem;
+      max-width: 720px;
+      margin: 0 auto;
+      line-height: 1.55;
+    }
+
+    .caption code {
+      font-size: 0.72rem;
+      background: rgba(110, 118, 129, 0.15);
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+
+    @media (max-width: 600px) {
+      .board-layer { transform: rotateX(6deg); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>組織図（スタイル・球体）</h1>
+    <p>データは <code>部署/部署一覧.md</code> の <code>GOVERNANCE_NODES</code> / <code>DEPTS</code> と同期 ·
+      <a href="組織図_キャンバス版.html">キャンバス版（球面）</a></p>
+  </header>
+
+  <div class="scene" aria-label="組織図">
+    <div class="board-layer" id="org-flow"></div>
+  </div>
+
+  <p class="caption">
+    <strong>球体ノード</strong>をクリックすると、対応する <code>.md</code>（取締役会・Boss は <code>ガバナンス/board.md</code>、ARIS は <code>ARIS/profile.md</code>、全社執行は <code>部署/部署一覧.md</code>、部署は <code>部署/○○.md</code>）に遷移します。
+  </p>
+
+  <script>
+    // 同期元: 部署/部署一覧.md（GOVERNANCE_NODES / DEPTS）
+    const GOVERNANCE_NODES = [
+      { name: "取締役会", path: "ガバナンス/board.md", hint: "ガバナンス" },
+      { name: "Boss", path: "ガバナンス/board.md", hint: "議長" },
+      { name: "ARIS", path: "ARIS/profile.md", hint: "最高経営責任者" },
+      { name: "全社執行", path: "部署/部署一覧.md", hint: "執行" },
+    ];
+
+    const DEPTS = [
+      { name: "業務運営", file: "./業務運営.md" },
+      { name: "財務", file: "./財務.md" },
+      { name: "事業・製品", file: "./事業・製品.md" },
+      { name: "開発", file: "./開発.md" },
+      { name: "マーケティング", file: "./マーケティング.md" },
+      { name: "人事", file: "./人事.md" },
+    ];
+
+    function sphereLink(opts) {
+      const { name, path, hint, variant } = opts;
+      const a = document.createElement("a");
+      a.className = "sphere-link sphere-link--" + variant;
+      a.href = path;
+      a.title = path + " を開く";
+      a.setAttribute("aria-label", name + " — " + path);
+
+      const h = document.createElement("span");
+      h.className = "hint";
+      h.textContent = hint;
+
+      const t = document.createElement("span");
+      t.className = "title";
+      t.textContent = name;
+
+      const s = document.createElement("span");
+      s.className = "sub";
+      s.textContent = path;
+
+      a.appendChild(h);
+      a.appendChild(t);
+      a.appendChild(s);
+      return a;
+    }
+
+    function connector() {
+      const d = document.createElement("div");
+      d.className = "connector";
+      d.setAttribute("aria-hidden", "true");
+      return d;
+    }
+
+    (function render() {
+      const root = document.getElementById("org-flow");
+      if (!root) return;
+
+      const [g0, g1, g2, g3] = GOVERNANCE_NODES;
+
+      root.appendChild(
+        sphereLink({
+          name: g0.name,
+          path: g0.path,
+          hint: g0.hint,
+          variant: "gov",
+        })
+      );
+      root.appendChild(connector());
+
+      const row = document.createElement("div");
+      row.className = "row-board";
+      row.appendChild(
+        sphereLink({ name: g1.name, path: g1.path, hint: g1.hint, variant: "gov" })
+      );
+      row.appendChild(
+        sphereLink({ name: g2.name, path: g2.path, hint: g2.hint, variant: "gov" })
+      );
+      root.appendChild(row);
+      root.appendChild(connector());
+
+      root.appendChild(
+        sphereLink({
+          name: g3.name,
+          path: g3.path,
+          hint: g3.hint,
+          variant: "gov",
+        })
+      );
+      root.appendChild(connector());
+
+      const grid = document.createElement("div");
+      grid.className = "dept-grid";
+      grid.setAttribute("role", "list");
+
+      for (const d of DEPTS) {
+        const path = d.file.replace(/^\.\//, "");
+        const href = "部署/" + path;
+        grid.appendChild(
+          sphereLink({
+            name: d.name,
+            path: href,
+            hint: "部署",
+            variant: "dept",
+          })
+        );
+      }
+      root.appendChild(grid);
+    })();
+  </script>
+</body>
+</html>

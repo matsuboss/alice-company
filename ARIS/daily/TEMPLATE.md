@@ -20,7 +20,7 @@
 
 ## 5. エビデンスに基づく提案への接続（任意）
 
-- 今日の気づきが、次の**正式提案**（`strategy/evidence_based_proposals.md`）に繋がるならメモ。
+- 今日の気づきが、次の**正式提案**（`戦略/evidence_based_proposals.md`）に繋がるならメモ。
 
 ---
 

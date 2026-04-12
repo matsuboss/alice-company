@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>組織図（キャンバス・球面）</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      background: radial-gradient(ellipse 100% 80% at 50% 0%, #1a2332 0%, var(--bg) 50%);
+      color: #e6edf3;
+      min-height: 100vh;
+    }
+    header {
+      text-align: center;
+      padding: 1rem;
+    }
+    header h1 { margin: 0; font-size: 1.25rem; }
+    header p { margin: 0.4rem 0 0; font-size: 0.78rem; color: var(--muted); }
+    header a { color: var(--accent); }
+    #wrap {
+      position: relative;
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 0.5rem 1rem;
+    }
+    canvas {
+      display: block;
+      width: 100%;
+      height: min(72vh, 640px);
+      border-radius: 12px;
+      background: linear-gradient(180deg, #0d1117 0%, #111820 100%);
+      cursor: grab;
+      touch-action: none;
+    }
+    canvas:active { cursor: grabbing; }
+    #hint {
+      text-align: center;
+      font-size: 0.72rem;
+      color: var(--muted);
+      padding: 0.5rem 1rem 1.5rem;
+      line-height: 1.5;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    #hint code {
+      font-size: 0.68rem;
+      background: rgba(110,118,129,0.15);
+      padding: 0.08rem 0.3rem;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>組織図（キャンバス・球面）</h1>
+    <p>
+      ドラッグで回転 · 球をクリックでドキュメントへ ·
+      データは <code>部署/部署一覧.md</code> と同期 ·
+      <a href="組織図_スタイル版.html">スタイル版（球体）</a>
+    </p>
+  </header>
+  <div id="wrap">
+    <canvas id="c" width="1100" height="640" aria-label="組織図・球面キャンバス"></canvas>
+  </div>
+  <p id="hint">
+    <strong>ガバナンスノード</strong>（取締役会・Boss・ARIS・全社執行）と <strong>部署リスト</strong>を球面上に配置しています（変数名は <code>GOVERNANCE_NODES</code> / <code>DEPTS</code>）。
+    クリックで <code>ガバナンス/board.md</code> · <code>ARIS/profile.md</code> · <code>部署/部署一覧.md</code> · <code>部署/*.md</code> に遷移します。
+  </p>
+
+  <script>
+    // 同期元: 部署/部署一覧.md（GOVERNANCE_NODES / DEPTS）
+    const GOVERNANCE_NODES = [
+      { name: "取締役会", path: "ガバナンス/board.md", hint: "ガバナンス" },
+      { name: "Boss", path: "ガバナンス/board.md", hint: "議長" },
+      { name: "ARIS", path: "ARIS/profile.md", hint: "最高経営責任者" },
+      { name: "全社執行", path: "部署/部署一覧.md", hint: "執行" },
+    ];
+
+    const DEPTS = [
+      { name: "業務運営", file: "./業務運営.md" },
+      { name: "財務", file: "./財務.md" },
+      { name: "事業・製品", file: "./事業・製品.md" },
+      { name: "開発", file: "./開発.md" },
+      { name: "マーケティング", file: "./マーケティング.md" },
+      { name: "人事", file: "./人事.md" },
+    ];
+
+    const NODES = [
+      ...GOVERNANCE_NODES.map((n) => ({
+        name: n.name,
+        path: n.path,
+        hint: n.hint,
+        tier: "ガバナンス",
+      })),
+      ...DEPTS.map((d) => {
+        const p = d.file.replace(/^\.\//, "");
+        return {
+          name: d.name,
+          path: "部署/" + p,
+          hint: "部署",
+          tier: "部署",
+        };
+      }),
+    ];
+
+    function fibonacciSphere(i, n, radius) {
+      const y = 1 - (2 * (i + 0.5)) / n;
+      const r = Math.sqrt(Math.max(0, 1 - y * y));
+      const theta = Math.PI * (3 - Math.sqrt(5)) * i;
+      return {
+        x: Math.cos(theta) * r * radius,
+        y: y * radius,
+        z: Math.sin(theta) * r * radius,
+      };
+    }
+
+    function rotateY(p, ang) {
+      const c = Math.cos(ang),
+        s = Math.sin(ang);
+      return { x: p.x * c + p.z * s, y: p.y, z: -p.x * s + p.z * c };
+    }
+
+    function rotateX(p, ang) {
+      const c = Math.cos(ang),
+        s = Math.sin(ang);
+      return { x: p.x, y: p.y * c - p.z * s, z: p.y * s + p.z * c };
+    }
+
+    const canvas = document.getElementById("c");
+    const ctx = canvas.getContext("2d");
+
+    const base = NODES.map((n, i) => ({
+      ...n,
+      ...fibonacciSphere(i, NODES.length, 2.4),
+    }));
+
+    let rotX = 0.35;
+    let rotY = -0.45;
+    let drag = false;
+    let lx = 0,
+      ly = 0;
+    let auto = 0.0018;
+
+    function project(p, w, h) {
+      const fl = 3.8;
+      const sc = fl / (fl + p.z);
+      return {
+        sx: w * 0.5 + p.x * sc * 140,
+        sy: h * 0.5 - p.y * sc * 140,
+        sc,
+        z: p.z,
+      };
+    }
+
+    function drawSphere(sx, sy, rScreen, tier, label, light) {
+      const g = ctx.createRadialGradient(
+        sx - rScreen * 0.35,
+        sy - rScreen * 0.35,
+        rScreen * 0.1,
+        sx,
+        sy,
+        rScreen
+      );
+      const baseC = tier === "ガバナンス" ? [40, 80, 140] : [35, 120, 70];
+      const hi = Math.min(255, baseC[0] + light * 80);
+      const mid = Math.min(255, baseC[1] + light * 60);
+      const lo = Math.min(255, baseC[2] + light * 40);
+      g.addColorStop(0, `rgba(${hi},${mid},${Math.min(255, lo + 40)},0.95)`);
+      g.addColorStop(0.55, `rgba(${baseC[0]},${baseC[1]},${baseC[2]},0.92)`);
+      g.addColorStop(1, "rgba(10,14,22,0.95)");
+
+      ctx.beginPath();
+      ctx.arc(sx, sy, rScreen, 0, Math.PI * 2);
+      ctx.fillStyle = g;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(88,166,255,0.35)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(230,237,243,0.95)";
+      ctx.textAlign = "center";
+      const maxChars = rScreen > 26 ? 8 : 7;
+      const line1 = label.length <= maxChars ? label : label.slice(0, maxChars);
+      const line2 =
+        label.length > maxChars ? label.slice(maxChars, maxChars * 2) : "";
+      ctx.font = "600 11px system-ui,sans-serif";
+      ctx.fillText(line1, sx, sy - (line2 ? 5 : 0));
+      if (line2) {
+        ctx.font = "500 10px system-ui,sans-serif";
+        ctx.fillText(line2, sx, sy + 8);
+      }
+    }
+
+    let projected = [];
+
+    function frame() {
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+
+      rotY += auto;
+
+      projected = [];
+      for (const n of base) {
+        let p = { x: n.x, y: n.y, z: n.z };
+        p = rotateY(p, rotY);
+        p = rotateX(p, rotX);
+        const pr = project(p, w, h);
+        const r = 22 + pr.sc * 18;
+        projected.push({
+          ...n,
+          sx: pr.sx,
+          sy: pr.sy,
+          r,
+          zSort: p.z,
+        });
+      }
+
+      projected.sort((a, b) => a.zSort - b.zSort);
+
+      for (const n of projected) {
+        const light = (n.zSort + 2.5) / 5;
+        drawSphere(n.sx, n.sy, n.r, n.tier, n.name, light);
+      }
+
+      requestAnimationFrame(frame);
+    }
+
+    function pick(mx, my) {
+      let best = null;
+      for (let i = projected.length - 1; i >= 0; i--) {
+        const n = projected[i];
+        const dx = mx - n.sx;
+        const dy = my - n.sy;
+        if (dx * dx + dy * dy <= n.r * n.r) {
+          best = n;
+          break;
+        }
+      }
+      return best;
+    }
+
+    canvas.addEventListener("mousedown", (e) => {
+      drag = true;
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+    window.addEventListener("mouseup", () => {
+      drag = false;
+    });
+    canvas.addEventListener("mousemove", (e) => {
+      if (!drag) return;
+      const dx = e.clientX - lx;
+      const dy = e.clientY - ly;
+      rotY += dx * 0.005;
+      rotX += dy * 0.004;
+      rotX = Math.max(-1.1, Math.min(1.1, rotX));
+      lx = e.clientX;
+      ly = e.clientY;
+    });
+
+    canvas.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length === 1) {
+          drag = true;
+          lx = e.touches[0].clientX;
+          ly = e.touches[0].clientY;
+        }
+      },
+      { passive: true }
+    );
+    canvas.addEventListener(
+      "touchmove",
+      (e) => {
+        if (!drag || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        rotY += (t.clientX - lx) * 0.006;
+        rotX += (t.clientY - ly) * 0.005;
+        rotX = Math.max(-1.1, Math.min(1.1, rotX));
+        lx = t.clientX;
+        ly = t.clientY;
+      },
+      { passive: true }
+    );
+    window.addEventListener("touchend", () => {
+      drag = false;
+    });
+
+    canvas.addEventListener("click", (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const mx = (e.clientX - rect.left) * scaleX;
+      const my = (e.clientY - rect.top) * scaleY;
+      const hit = pick(mx, my);
+      if (hit) {
+        window.location.href = hit.path;
+      }
+    });
+
+    function resize() {
+      const wrap = document.getElementById("wrap");
+      const r = wrap.getBoundingClientRect();
+      const h = Math.min(Math.max(r.width * 0.55, 320), 640);
+      canvas.style.height = h + "px";
+      canvas.width = Math.floor(r.width);
+      canvas.height = Math.floor(h);
+    }
+    window.addEventListener("resize", resize);
+    resize();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>会社運営可視化（3D）</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --panel: rgba(22, 27, 34, 0.92);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; }
+    body {
+      font-family: "Segoe UI", "Hiragino Sans", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+      background: var(--bg);
+      color: #e6edf3;
+    }
+    header {
+      position: absolute;
+      left: 0; right: 0; top: 0;
+      z-index: 2;
+      text-align: center;
+      padding: 0.85rem 1rem 0.5rem;
+      pointer-events: none;
+      background: linear-gradient(180deg, rgba(13,17,23,0.95) 0%, rgba(13,17,23,0.4) 70%, transparent 100%);
+    }
+    header h1 { margin: 0; font-size: 1.2rem; font-weight: 600; }
+    header p { margin: 0.35rem 0 0; font-size: 0.75rem; color: var(--muted); }
+    header a { color: var(--accent); pointer-events: auto; }
+    #viewport {
+      position: absolute;
+      inset: 0;
+    }
+    #viewport canvas { display: block; }
+    #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .label {
+      position: absolute;
+      transform: translate(-50%, -100%);
+      margin-top: -8px;
+      padding: 2px 8px 3px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      background: var(--panel);
+      border: 1px solid rgba(88, 166, 255, 0.25);
+      color: #e6edf3;
+      pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .label.tier-s { border-color: rgba(163, 113, 247, 0.45); }
+    .label.tier-g { border-color: rgba(88, 166, 255, 0.45); }
+    .label.tier-d { border-color: rgba(63, 185, 80, 0.45); }
+    .label.tier-o { border-color: rgba(210, 153, 34, 0.45); }
+    .label.tier-p { border-color: rgba(240, 136, 62, 0.55); }
+    #legend {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      z-index: 2;
+      font-size: 0.68rem;
+      color: var(--muted);
+      max-width: min(92vw, 360px);
+      line-height: 1.45;
+      background: var(--panel);
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(48, 54, 61, 0.9);
+    }
+    #legend strong { color: #e6edf3; }
+    #hint {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      z-index: 2;
+      font-size: 0.65rem;
+      color: var(--muted);
+      text-align: right;
+      max-width: 240px;
+      line-height: 1.4;
+    }
+    #loading {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      background: var(--bg);
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <div id="loading">3D を読み込み中…</div>
+  <header>
+    <h1>会社運営可視化（3D）</h1>
+    <p>
+      ドラッグで回転 · ホイールでズーム · ノードをクリックで Markdown へ ·
+      <a href="組織図_キャンバス版.html">組織図（2D球面）</a>
+    </p>
+  </header>
+  <div id="viewport"></div>
+  <div id="labels" aria-hidden="true"></div>
+  <div id="legend">
+    <strong>階層（上→下）</strong><br />
+    <span style="color:#a371f7">■</span> 戦略 ·
+    <span style="color:#58a6ff">■</span> ガバナンス ·
+    <span style="color:#3fb950">■</span> 部署 ·
+    <span style="color:#f0883e">■</span> プロジェクト ·
+    <span style="color:#d29922">■</span> 運用基盤<br />
+    GOVERNANCE / DEPTS は <code style="font-size:0.65rem">部署/部署一覧.md</code> と同期。プロジェクトは <code style="font-size:0.65rem">部署/開発.md</code> の表と同期（戦略・基盤は本ページ内定数）。
+  </div>
+  <div id="hint">
+    ローカルで <code>file://</code> 表示の場合、ブラウザによってはモジュール読込に制限があります。Cursor / VS Code の「Live Preview」または簡易サーバ推奨。
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    // --- 同期元: 部署/部署一覧.md（GOVERNANCE_NODES / DEPTS）---
+    const GOVERNANCE_NODES = [
+      { name: "取締役会", path: "ガバナンス/board.md", hint: "ガバナンス" },
+      { name: "Boss", path: "ガバナンス/board.md", hint: "議長" },
+      { name: "ARIS", path: "ARIS/profile.md", hint: "最高経営責任者" },
+      { name: "全社執行", path: "部署/部署一覧.md", hint: "執行" },
+    ];
+
+    const DEPTS = [
+      { name: "業務運営", file: "./業務運営.md" },
+      { name: "財務", file: "./財務.md" },
+      { name: "事業・製品", file: "./事業・製品.md" },
+      { name: "開発", file: "./開発.md" },
+      { name: "マーケティング", file: "./マーケティング.md" },
+      { name: "人事", file: "./人事.md" },
+    ];
+
+    // 戦略・運用は概要・戦略案内に合わせた固定ノード（部署一覧の表とは別管理）
+    const STRATEGY_NODES = [
+      { name: "ビジョン", path: "戦略/vision.md", hint: "北極星" },
+      { name: "ロードマップ", path: "戦略/roadmap.md", hint: "実行" },
+      { name: "事業", path: "戦略/business.md", hint: "中身" },
+      { name: "戦略索引", path: "戦略/戦略フォルダ案内.md", hint: "一覧" },
+    ];
+
+    // 同期元: 部署/開発.md の「プロジェクト」表（名前・コード置き場の README）
+    const PROJECT_NODES = [
+      {
+        name: "ARIS PJ",
+        path: "プロジェクト/ARIS-2026-04-11-extract/README.md",
+        hint: "製品コード",
+      },
+    ];
+
+    const OPS_NODES = [
+      { name: "意思決定ログ", path: "意思決定/decision_log.md", hint: "記録" },
+      { name: "財務索引", path: "財務管理/財務フォルダ案内.md", hint: "数値" },
+      { name: "Boss↔ARIS", path: "コミュニケーション/boss-aris/2026-04-10_inception.md", hint: "対話" },
+    ];
+
+    const COL = {
+      strategy: 0xa371f7,
+      governance: 0x58a6ff,
+      dept: 0x3fb950,
+      project: 0xf0883e,
+      ops: 0xd29922,
+      link: 0x30363d,
+    };
+
+    function ringCoords(count, y, radius) {
+      const out = [];
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 - Math.PI / 2;
+        out.push(new THREE.Vector3(Math.cos(a) * radius, y, Math.sin(a) * radius));
+      }
+      return out;
+    }
+
+    function fibonacciRing(count, y, radius) {
+      const out = [];
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      for (let i = 0; i < count; i++) {
+        const t = (i + 0.5) / count;
+        const th = golden * i;
+        const rr = radius * Math.sqrt(t);
+        out.push(new THREE.Vector3(Math.cos(th) * rr, y, Math.sin(th) * rr));
+      }
+      return out;
+    }
+
+    const container = document.getElementById("viewport");
+    const labelRoot = document.getElementById("labels");
+    const loading = document.getElementById("loading");
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0d1117);
+    scene.fog = new THREE.Fog(0x0d1117, 12, 42);
+
+    const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 200);
+    camera.position.set(10, 6, 14);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0x0d1117, 1);
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 6;
+    controls.maxDistance = 48;
+    controls.target.set(0, 0.5, 0);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.45));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.85);
+    dir.position.set(8, 14, 10);
+    scene.add(dir);
+    const fill = new THREE.DirectionalLight(0x58a6ff, 0.2);
+    fill.position.set(-10, 4, -8);
+    scene.add(fill);
+
+    const sphereGeo = new THREE.SphereGeometry(1, 28, 28);
+    const nodes = [];
+    const labelEls = [];
+
+    function addNode(pos, color, path, name, tierClass) {
+      const mat = new THREE.MeshStandardMaterial({
+        color,
+        metalness: 0.15,
+        roughness: 0.45,
+        emissive: color,
+        emissiveIntensity: 0.08,
+      });
+      const mesh = new THREE.Mesh(sphereGeo, mat);
+      const s =
+        tierClass === "tier-d"
+          ? 0.52
+          : tierClass === "tier-g"
+            ? 0.48
+            : tierClass === "tier-s"
+              ? 0.42
+              : tierClass === "tier-p"
+                ? 0.46
+                : 0.45;
+      mesh.scale.setScalar(s);
+      mesh.position.copy(pos);
+      mesh.userData = { path, name };
+      scene.add(mesh);
+      nodes.push(mesh);
+
+      const el = document.createElement("div");
+      el.className = "label " + tierClass;
+      el.textContent = name;
+      labelRoot.appendChild(el);
+      labelEls.push({ el, mesh, name });
+    }
+
+    function addLinkLine(a, b) {
+      const g = new THREE.BufferGeometry().setFromPoints([a, b]);
+      const m = new THREE.LineBasicMaterial({ color: COL.link, transparent: true, opacity: 0.35 });
+      const line = new THREE.Line(g, m);
+      scene.add(line);
+    }
+
+    // --- 配置: 上から 戦略 → ガバナンス → 部署 → プロジェクト → 運用 ---
+    const yS = 5.2;
+    const yG = 2.2;
+    const yD = -0.8;
+    const yP = -3.0;
+    const yO = -5.2;
+
+    const posS = ringCoords(STRATEGY_NODES.length, yS, 3.2);
+    STRATEGY_NODES.forEach((n, i) => {
+      addNode(posS[i], COL.strategy, n.path, n.name, "tier-s");
+    });
+
+    const posG = ringCoords(GOVERNANCE_NODES.length, yG, 4.0);
+    GOVERNANCE_NODES.forEach((n, i) => {
+      addNode(posG[i], COL.governance, n.path, n.name, "tier-g");
+    });
+
+    const deptPaths = DEPTS.map((d) => {
+      const p = d.file.replace(/^\.\//, "");
+      return { name: d.name, path: "部署/" + p };
+    });
+    const posD = fibonacciRing(deptPaths.length, yD, 5.5);
+    deptPaths.forEach((n, i) => {
+      addNode(posD[i], COL.dept, n.path, n.name, "tier-d");
+    });
+
+    const posP = ringCoords(PROJECT_NODES.length, yP, 4.2);
+    PROJECT_NODES.forEach((n, i) => {
+      addNode(posP[i], COL.project, n.path, n.name, "tier-p");
+    });
+
+    const posO = ringCoords(OPS_NODES.length, yO, 3.6);
+    OPS_NODES.forEach((n, i) => {
+      addNode(posO[i], COL.ops, n.path, n.name, "tier-o");
+    });
+
+    // 各層の中心からノードへ（弱い接続）＋層間スパイン
+    const hubS = new THREE.Vector3(0, yS, 0);
+    const hubG = new THREE.Vector3(0, yG, 0);
+    const hubP = new THREE.Vector3(0, yP, 0);
+    posS.forEach((p) => addLinkLine(hubS, p));
+    posG.forEach((p) => addLinkLine(hubG, p));
+    posP.forEach((p) => addLinkLine(hubP, p));
+    addLinkLine(new THREE.Vector3(0, yS, 0), new THREE.Vector3(0, yG, 0));
+    addLinkLine(new THREE.Vector3(0, yG, 0), new THREE.Vector3(0, yD, 0));
+    addLinkLine(new THREE.Vector3(0, yD, 0), new THREE.Vector3(0, yP, 0));
+    addLinkLine(new THREE.Vector3(0, yP, 0), new THREE.Vector3(0, yO, 0));
+
+    // グリッド（床）
+    const grid = new THREE.GridHelper(24, 24, 0x21262d, 0x161b22);
+    grid.position.y = yO - 1.2;
+    grid.material.opacity = 0.35;
+    grid.material.transparent = true;
+    scene.add(grid);
+
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    function onPointerDown(ev) {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((ev.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((ev.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects(nodes, false);
+      if (hits.length && hits[0].object.userData.path) {
+        window.location.href = hits[0].object.userData.path;
+      }
+    }
+    renderer.domElement.addEventListener("pointerdown", onPointerDown);
+
+    function updateLabels() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      labelEls.forEach(({ el, mesh }) => {
+        const v = mesh.position.clone().project(camera);
+        const x = (v.x * 0.5 + 0.5) * w;
+        const y = (-v.y * 0.5 + 0.5) * h;
+        if (v.z > 1 || x < -80 || x > w + 80 || y < -40 || y > h + 40) {
+          el.style.display = "none";
+          return;
+        }
+        el.style.display = "block";
+        el.style.left = x + "px";
+        el.style.top = y + "px";
+        const sc = 1 / (mesh.position.distanceTo(camera.position) * 0.09 + 0.5);
+        el.style.opacity = Math.min(1, Math.max(0.35, sc * 0.85));
+      });
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    window.addEventListener("resize", onResize);
+
+    loading.style.display = "none";
+
+    function tick() {
+      requestAnimationFrame(tick);
+      controls.update();
+      renderer.render(scene, camera);
+      updateLabels();
+    }
+    tick();
+  </script>
+</body>
+</html>
