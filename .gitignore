@@ -8,3 +8,5 @@ Thumbs.db
 
 # Logs (keep structure, ignore content if sensitive)
 # ARIS/logs/*.log
+sync-pull.log
+sync.log
